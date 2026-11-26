@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUpRight, Award, Github, Mail, Phone, Linkedin, Swords, UserRound, X, Compass, Gem, Music2, MousePointer2, Activity } from 'lucide-react'
 
 type Section = 'home' | 'character' | 'materia' | 'projects' | 'journey' | 'contact'
+type MusicStatus = 'starting' | 'playing' | 'blocked' | 'error' | 'off'
 
 const navItems: { id: Section; label: string }[] = [
   { id: 'home', label: 'Chronicle' },
@@ -61,15 +62,32 @@ function App() {
   const [selectedSkill, setSelectedSkill] = useState(0)
   const [toast, setToast] = useState('')
   const [musicEnabled, setMusicEnabled] = useState(() => localStorage.getItem('chronicle-music-enabled') !== 'false')
+  const [musicStatus, setMusicStatus] = useState<MusicStatus>('starting')
   const [customCursorEnabled, setCustomCursorEnabled] = useState(() => localStorage.getItem('chronicle-cursor-enabled') !== 'false')
   const [animationsEnabled, setAnimationsEnabled] = useState(() => localStorage.getItem('chronicle-animations-enabled') !== 'false')
   const activeRef = useRef(active)
+  const musicEnabledRef = useRef(musicEnabled)
   const transitionTimers = useRef<number[]>([])
   const audioRef = useRef<HTMLAudioElement>(null)
   const hoverSoundRef = useRef<HTMLAudioElement>(null)
   const selectSoundRef = useRef<HTMLAudioElement>(null)
 
+  const requestMusicPlayback = useCallback((audio: HTMLAudioElement | null) => {
+    if (!audio || !musicEnabledRef.current) return Promise.resolve(false)
+    setMusicStatus('starting')
+    return audio.play().then(() => {
+      if (musicEnabledRef.current) setMusicStatus('playing')
+      return true
+    }).catch((error: unknown) => {
+      if (musicEnabledRef.current) {
+        setMusicStatus(error instanceof DOMException && error.name === 'NotAllowedError' ? 'blocked' : 'error')
+      }
+      return false
+    })
+  }, [])
+
   useEffect(() => {
+    musicEnabledRef.current = musicEnabled
     localStorage.setItem('chronicle-music-enabled', String(musicEnabled))
     // The music toggle is the master audio switch for both music and menu sounds.
     for (const sound of [hoverSoundRef.current, selectSoundRef.current]) {
@@ -82,24 +100,28 @@ function App() {
 
     if (!musicEnabled) {
       audio.pause()
+      setMusicStatus('off')
       return
     }
 
-    let unlocked = false
+    let started = false
     const startPlayback = () => {
-      if (unlocked) return
-      unlocked = true
-      void audio.play().catch(() => {})
+      if (started) return
+      void requestMusicPlayback(audio).then((success) => {
+        if (!success) return
+        started = true
+        window.removeEventListener('pointerdown', startPlayback)
+        window.removeEventListener('keydown', startPlayback)
+      })
     }
-    void audio.play().catch(() => {
-      window.addEventListener('pointerdown', startPlayback, { once: true })
-      window.addEventListener('keydown', startPlayback, { once: true })
-    })
+    window.addEventListener('pointerdown', startPlayback)
+    window.addEventListener('keydown', startPlayback)
+    startPlayback()
     return () => {
       window.removeEventListener('pointerdown', startPlayback)
       window.removeEventListener('keydown', startPlayback)
     }
-  }, [musicEnabled])
+  }, [musicEnabled, requestMusicPlayback])
 
   useEffect(() => {
     const selectableSelector = 'button:not(:disabled),a[href],[role="button"],[role="link"],input[type="submit"]:not(:disabled),input[type="button"]:not(:disabled),input[type="checkbox"]:not(:disabled),input[type="radio"]:not(:disabled),select:not(:disabled),summary,label[for]'
@@ -190,11 +212,16 @@ function App() {
   }
 
   const toggleMusic = () => {
+    if (musicEnabled && (musicStatus === 'blocked' || musicStatus === 'error')) {
+      void requestMusicPlayback(audioRef.current)
+      return
+    }
     const nextEnabled = !musicEnabled
+    musicEnabledRef.current = nextEnabled
     setMusicEnabled(nextEnabled)
     const audio = audioRef.current
     if (!nextEnabled) audio?.pause()
-    else if (audio) void audio.play().catch(() => {})
+    else void requestMusicPlayback(audio)
   }
 
   useEffect(() => {
@@ -218,8 +245,8 @@ function App() {
         </button>
         <div className="topbar-right">
           <div className="utility-toggles" aria-label="Experience settings">
-            <button className="utility-toggle" type="button" aria-pressed={musicEnabled} onClick={toggleMusic} title={musicEnabled ? 'Turn all audio off' : 'Turn all audio on'}>
-              <Music2 size={14} aria-hidden="true" /><span>AUDIO</span><b>{musicEnabled ? 'ON' : 'OFF'}</b>
+            <button className="utility-toggle" type="button" aria-pressed={musicEnabled} onClick={toggleMusic} title={!musicEnabled ? 'Turn all audio on' : musicStatus === 'blocked' ? 'Autoplay blocked. Tap to start audio.' : musicStatus === 'error' ? 'Audio unavailable. Tap to retry.' : 'Turn all audio off'} aria-label={!musicEnabled ? 'Turn all audio on' : musicStatus === 'blocked' ? 'Autoplay blocked. Tap to start audio.' : musicStatus === 'error' ? 'Audio unavailable. Tap to retry.' : 'Turn all audio off'}>
+              <Music2 size={14} aria-hidden="true" /><span>AUDIO</span><b>{!musicEnabled ? 'OFF' : musicStatus === 'blocked' ? 'TAP' : musicStatus === 'error' ? 'RETRY' : 'ON'}</b>
             </button>
             <button className="utility-toggle" type="button" aria-pressed={customCursorEnabled} onClick={() => setCustomCursorEnabled(value => !value)} title={customCursorEnabled ? 'Use the system cursor' : 'Use the game cursors'}>
               <MousePointer2 size={14} aria-hidden="true" /><span>CURSOR</span><b>{customCursorEnabled ? 'ON' : 'OFF'}</b>
@@ -232,7 +259,7 @@ function App() {
         </div>
       </header>
 
-      <audio ref={audioRef} src="/audio/portfolio-theme.mp3" loop preload="none" />
+      <audio ref={audioRef} src="/audio/portfolio-theme.mp3" loop preload="auto" />
       <audio ref={hoverSoundRef} src="/audio/cursor_on_selectable_item.wav" preload="auto" />
       <audio ref={selectSoundRef} src="/audio/select_item.wav" preload="auto" />
 
