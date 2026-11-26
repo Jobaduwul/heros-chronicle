@@ -259,7 +259,7 @@ function App() {
         </div>
       </header>
 
-      <audio ref={audioRef} src="/audio/portfolio-theme.mp3" loop preload="auto" />
+      <audio ref={audioRef} src="/audio/portfolio-theme.mp3" autoPlay loop preload="auto" />
       <audio ref={hoverSoundRef} src="/audio/cursor_on_selectable_item.wav" preload="auto" />
       <audio ref={selectSoundRef} src="/audio/select_item.wav" preload="auto" />
 
